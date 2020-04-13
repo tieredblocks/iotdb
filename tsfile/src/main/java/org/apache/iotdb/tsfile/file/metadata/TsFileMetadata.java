@@ -90,6 +90,15 @@ public class TsFileMetadata {
     }
     fileMetaData.setVersionInfo(versionInfo);
 
+    long start = System.currentTimeMillis();
+    Map<String, Long> map = new HashMap<>();
+    for (int i = 0; i < 300000; i++) {
+      String key = ReadWriteIOUtils.readString(buffer);
+      Long value = ReadWriteIOUtils.readLong(buffer);
+      map.put(key + i, value);
+    }
+    System.out.println("read String " + map.size());
+    System.out.println(System.currentTimeMillis() - start);
 
     // read bloom filter
     if (buffer.hasRemaining()) {
@@ -136,6 +145,11 @@ public class TsFileMetadata {
     for (Pair<Long, Long> versionPair : versionInfo) {
       byteLen +=ReadWriteIOUtils.write(versionPair.left, outputStream);
       byteLen +=ReadWriteIOUtils.write(versionPair.right, outputStream);
+    }
+
+    for (int i = 0; i < 300000; i++) {
+      byteLen += ReadWriteIOUtils.write("root.XDB.SDD.tag50000000", outputStream);
+      byteLen += ReadWriteIOUtils.write(100000L, outputStream);
     }
 
     return byteLen;

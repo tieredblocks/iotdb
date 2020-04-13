@@ -19,6 +19,8 @@
 
 package org.apache.iotdb.tsfile.file.metadata;
 
+import java.util.HashMap;
+import java.util.Map;
 import org.apache.iotdb.tsfile.file.metadata.enums.TSDataType;
 import org.apache.iotdb.tsfile.file.metadata.statistics.Statistics;
 import org.apache.iotdb.tsfile.read.controller.IChunkMetadataLoader;
