@@ -301,13 +301,16 @@ public class TsFileSequenceReader implements AutoCloseable {
     Pair<Long, Integer> deviceMetadataIndex = tsFileMetaData.getDeviceMetadataIndex().get(device);
     Map<String, TimeseriesMetadata> deviceMetadata = new HashMap<>();
     ByteBuffer buffer = readData(deviceMetadataIndex.left, deviceMetadataIndex.right);
+    System.out.println("read TimeseriesMetadata io cost: " + (System.currentTimeMillis() - start));
+    System.out.println("timeseriesMetadata size: " + deviceMetadataIndex.right);
+    start = System.currentTimeMillis();
     while (buffer.hasRemaining()) {
       TimeseriesMetadata tsMetaData = TimeseriesMetadata.deserializeFrom(buffer);
       deviceMetadata.put(tsMetaData.getMeasurementId(), tsMetaData);
     }
 
-    System.out.println("read TimeseriesMetadata " + deviceMetadata.size());
-    System.out.println(System.currentTimeMillis() - start);
+    System.out.println("read TimeseriesMetadata deserialize cost: " + (System.currentTimeMillis() - start));
+    System.out.println("Timeseries Metadata size: " + deviceMetadata.size());
     return deviceMetadata;
   }
 
