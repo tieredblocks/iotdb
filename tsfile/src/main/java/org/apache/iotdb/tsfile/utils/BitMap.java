@@ -20,6 +20,7 @@
 package org.apache.iotdb.tsfile.utils;
 
 import java.util.Arrays;
+import java.util.Objects;
 
 public class BitMap {
   private static final byte[] BIT_UTIL = new byte[] {1, 2, 4, 8, 16, 32, 64, -128};
@@ -62,6 +63,11 @@ public class BitMap {
   /** returns the value of the bit with the specified index. */
   public boolean isMarked(int position) {
     return (bits[position / Byte.SIZE] & BIT_UTIL[position % Byte.SIZE]) != 0;
+  }
+
+  /** mark as 1 at all positions. */
+  public void markAll() {
+    Arrays.fill(bits, (byte) 0XFF);
   }
 
   /** mark as 1 at the given bit position. */
@@ -117,5 +123,66 @@ public class BitMap {
       res.append(isMarked(i) ? 1 : 0);
     }
     return res.toString();
+  }
+
+  @Override
+  public int hashCode() {
+    int result = Objects.hash(size);
+    result = 31 * result + Arrays.hashCode(bits);
+    return result;
+  }
+
+  @Override
+  public boolean equals(Object obj) {
+    if (obj == this) {
+      return true;
+    }
+    if (obj == null) {
+      return false;
+    }
+    if (!(obj instanceof BitMap)) {
+      return false;
+    }
+    BitMap other = (BitMap) obj;
+    return this.size == other.size && Arrays.equals(this.bits, other.bits);
+  }
+
+  @Override
+  public BitMap clone() {
+    byte[] cloneBytes = new byte[this.bits.length];
+    System.arraycopy(this.bits, 0, cloneBytes, 0, this.bits.length);
+    return new BitMap(this.size, cloneBytes);
+  }
+
+  /**
+   * Copies a bitmap from the specified source bitmap, beginning at the specified position, to the
+   * specified position of the destination bitmap. A subsequence of bits are copied from the source
+   * bitmap referenced by src to the destination bitmap referenced by dest. The number of bits
+   * copied is equal to the length argument. The bits at positions srcPos through srcPos+length-1 in
+   * the source bitmap are copied into positions destPos through destPos+length-1, respectively, of
+   * the destination bitmap.
+   *
+   * @param src the source bitmap.
+   * @param srcPos starting position in the source bitmap.
+   * @param dest the destination bitmap.
+   * @param destPos starting position in the destination bitmap.
+   * @param length the number of bits to be copied.
+   * @throws IndexOutOfBoundsException if copying would cause access of data outside bitmap bounds.
+   */
+  public static void copyOfRange(BitMap src, int srcPos, BitMap dest, int destPos, int length) {
+    if (srcPos + length > src.size) {
+      throw new IndexOutOfBoundsException(
+          (srcPos + length - 1) + " is out of src range " + src.size);
+    } else if (destPos + length > dest.size) {
+      throw new IndexOutOfBoundsException(
+          (destPos + length - 1) + " is out of dest range " + dest.size);
+    }
+    for (int i = 0; i < length; ++i) {
+      if (src.isMarked(srcPos + i)) {
+        dest.mark(destPos + i);
+      } else {
+        dest.unmark(destPos + i);
+      }
+    }
   }
 }
