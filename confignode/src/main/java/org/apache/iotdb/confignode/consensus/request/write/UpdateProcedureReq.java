@@ -21,9 +21,10 @@ package org.apache.iotdb.confignode.consensus.request.write;
 
 import org.apache.iotdb.confignode.consensus.request.ConfigRequest;
 import org.apache.iotdb.confignode.consensus.request.ConfigRequestType;
-import org.apache.iotdb.confignode.procedure.ProcedureFactory;
-import org.apache.iotdb.procedure.Procedure;
+import org.apache.iotdb.confignode.procedure.Procedure;
+import org.apache.iotdb.confignode.procedure.store.ProcedureFactory;
 
+import java.io.DataOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Objects;
@@ -45,10 +46,10 @@ public class UpdateProcedureReq extends ConfigRequest {
   }
 
   @Override
-  protected void serializeImpl(ByteBuffer buffer) {
-    buffer.putInt(ConfigRequestType.UpdateProcedure.ordinal());
+  protected void serializeImpl(DataOutputStream stream) throws IOException {
+    stream.writeInt(ConfigRequestType.UpdateProcedure.ordinal());
     if (procedure != null) {
-      procedure.serialize(buffer);
+      procedure.serialize(stream);
     }
   }
 

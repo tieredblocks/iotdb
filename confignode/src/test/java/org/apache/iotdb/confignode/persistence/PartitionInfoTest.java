@@ -26,9 +26,17 @@ import org.apache.iotdb.common.rpc.thrift.TEndPoint;
 import org.apache.iotdb.common.rpc.thrift.TRegionReplicaSet;
 import org.apache.iotdb.common.rpc.thrift.TSeriesPartitionSlot;
 import org.apache.iotdb.common.rpc.thrift.TTimePartitionSlot;
+import org.apache.iotdb.commons.partition.DataPartitionTable;
+import org.apache.iotdb.commons.partition.SchemaPartitionTable;
+import org.apache.iotdb.commons.partition.SeriesPartitionTable;
+import org.apache.iotdb.confignode.consensus.request.read.GetRegionInfoListReq;
 import org.apache.iotdb.confignode.consensus.request.write.CreateDataPartitionReq;
 import org.apache.iotdb.confignode.consensus.request.write.CreateRegionsReq;
 import org.apache.iotdb.confignode.consensus.request.write.CreateSchemaPartitionReq;
+import org.apache.iotdb.confignode.consensus.request.write.SetStorageGroupReq;
+import org.apache.iotdb.confignode.consensus.response.RegionInfoListResp;
+import org.apache.iotdb.confignode.persistence.partition.PartitionInfo;
+import org.apache.iotdb.confignode.rpc.thrift.TStorageGroupSchema;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.thrift.TException;
@@ -52,8 +60,7 @@ public class PartitionInfoTest {
   private static PartitionInfo partitionInfo;
   private static final File snapshotDir = new File(BASE_OUTPUT_PATH, "snapshot");
 
-  enum testFlag {
-    RegionReplica(10),
+  public enum testFlag {
     DataPartition(20),
     SchemaPartition(30);
 
@@ -70,7 +77,7 @@ public class PartitionInfoTest {
 
   @BeforeClass
   public static void setup() {
-    partitionInfo = PartitionInfo.getInstance();
+    partitionInfo = new PartitionInfo();
     if (!snapshotDir.exists()) {
       snapshotDir.mkdirs();
     }
@@ -89,47 +96,117 @@ public class PartitionInfoTest {
 
     partitionInfo.generateNextRegionGroupId();
 
-    CreateRegionsReq createRegionsReq = new CreateRegionsReq();
+    // Set StorageGroup
+    partitionInfo.setStorageGroup(new SetStorageGroupReq(new TStorageGroupSchema("root.test")));
 
-    TRegionReplicaSet tRegionReplicaSet =
+    // Create a SchemaRegion
+    CreateRegionsReq createRegionGroupsReq = new CreateRegionsReq();
+    TRegionReplicaSet schemaRegionReplicaSet =
         generateTRegionReplicaSet(
-            testFlag.RegionReplica.getFlag(),
-            generateTConsensusGroupId(testFlag.RegionReplica.getFlag()));
-    createRegionsReq.addRegion("root.test", tRegionReplicaSet);
-    partitionInfo.createRegions(createRegionsReq);
+            testFlag.SchemaPartition.getFlag(),
+            generateTConsensusGroupId(
+                testFlag.SchemaPartition.getFlag(), TConsensusGroupType.SchemaRegion));
+    createRegionGroupsReq.addRegionGroup("root.test", schemaRegionReplicaSet);
+    partitionInfo.createRegionGroups(createRegionGroupsReq);
 
+    // Create a DataRegion
+    createRegionGroupsReq = new CreateRegionsReq();
+    TRegionReplicaSet dataRegionReplicaSet =
+        generateTRegionReplicaSet(
+            testFlag.DataPartition.getFlag(),
+            generateTConsensusGroupId(
+                testFlag.DataPartition.getFlag(), TConsensusGroupType.DataRegion));
+    createRegionGroupsReq.addRegionGroup("root.test", dataRegionReplicaSet);
+    partitionInfo.createRegionGroups(createRegionGroupsReq);
+
+    // Create a SchemaPartition
     CreateSchemaPartitionReq createSchemaPartitionReq =
         generateCreateSchemaPartitionReq(
             testFlag.SchemaPartition.getFlag(),
-            generateTConsensusGroupId(testFlag.SchemaPartition.getFlag()));
+            generateTConsensusGroupId(
+                testFlag.SchemaPartition.getFlag(), TConsensusGroupType.SchemaRegion));
     partitionInfo.createSchemaPartition(createSchemaPartitionReq);
 
+    // Create a DataPartition
     CreateDataPartitionReq createDataPartitionReq =
         generateCreateDataPartitionReq(
             testFlag.DataPartition.getFlag(),
-            generateTConsensusGroupId(testFlag.DataPartition.getFlag()));
+            generateTConsensusGroupId(
+                testFlag.DataPartition.getFlag(), TConsensusGroupType.DataRegion));
     partitionInfo.createDataPartition(createDataPartitionReq);
-    int nextId = partitionInfo.getNextRegionGroupId();
+
+    partitionInfo.getDeletedRegionSet().add(dataRegionReplicaSet);
+    partitionInfo.getDeletedRegionSet().add(schemaRegionReplicaSet);
 
     partitionInfo.processTakeSnapshot(snapshotDir);
-    partitionInfo.clear();
-    partitionInfo.processLoadSnapshot(snapshotDir);
 
-    Assert.assertEquals(nextId, (int) partitionInfo.getNextRegionGroupId());
+    PartitionInfo partitionInfo1 = new PartitionInfo();
+    partitionInfo1.processLoadSnapshot(snapshotDir);
+    Assert.assertEquals(partitionInfo, partitionInfo1);
+  }
 
-    List<TRegionReplicaSet> reloadTRegionReplicaSet =
-        partitionInfo.getRegionReplicaSets(
-            Collections.singletonList(generateTConsensusGroupId(testFlag.RegionReplica.getFlag())));
-    Assert.assertEquals(1, reloadTRegionReplicaSet.size());
-    Assert.assertEquals(tRegionReplicaSet, reloadTRegionReplicaSet.get(0));
+  @Test
+  public void testShowRegion() {
+    partitionInfo.generateNextRegionGroupId();
 
-    Assert.assertEquals(
-        createDataPartitionReq.getAssignedDataPartition(),
-        partitionInfo.getDataPartition().getDataPartitionMap());
+    // Set StorageGroup
+    partitionInfo.setStorageGroup(new SetStorageGroupReq(new TStorageGroupSchema("root.test")));
 
-    Assert.assertEquals(
-        createSchemaPartitionReq.getAssignedSchemaPartition(),
-        partitionInfo.getSchemaPartition().getSchemaPartitionMap());
+    // Create a SchemaRegion
+    CreateRegionsReq createRegionsReq = new CreateRegionsReq();
+    TRegionReplicaSet schemaRegionReplicaSet =
+        generateTRegionReplicaSet(
+            testFlag.SchemaPartition.getFlag(),
+            generateTConsensusGroupId(
+                testFlag.SchemaPartition.getFlag(), TConsensusGroupType.SchemaRegion));
+    createRegionsReq.addRegionGroup("root.test", schemaRegionReplicaSet);
+    partitionInfo.createRegionGroups(createRegionsReq);
+
+    // Create a DataRegion
+    createRegionsReq = new CreateRegionsReq();
+    TRegionReplicaSet dataRegionReplicaSet =
+        generateTRegionReplicaSet(
+            testFlag.DataPartition.getFlag(),
+            generateTConsensusGroupId(
+                testFlag.DataPartition.getFlag(), TConsensusGroupType.DataRegion));
+    createRegionsReq.addRegionGroup("root.test", dataRegionReplicaSet);
+    partitionInfo.createRegionGroups(createRegionsReq);
+
+    GetRegionInfoListReq regionReq = new GetRegionInfoListReq();
+    regionReq.setRegionType(null);
+    RegionInfoListResp regionInfoList1 =
+        (RegionInfoListResp) partitionInfo.getRegionInfoList(regionReq);
+    Assert.assertEquals(regionInfoList1.getRegionInfoList().size(), 10);
+    regionInfoList1
+        .getRegionInfoList()
+        .forEach(
+            (regionInfo) -> {
+              Assert.assertEquals(regionInfo.getClientRpcIp(), "127.0.0.1");
+            });
+
+    regionReq.setRegionType(TConsensusGroupType.SchemaRegion);
+    RegionInfoListResp regionInfoList2 =
+        (RegionInfoListResp) partitionInfo.getRegionInfoList(regionReq);
+    Assert.assertEquals(regionInfoList2.getRegionInfoList().size(), 5);
+    regionInfoList2
+        .getRegionInfoList()
+        .forEach(
+            (regionInfo) -> {
+              Assert.assertEquals(
+                  regionInfo.getConsensusGroupId().getType(), TConsensusGroupType.SchemaRegion);
+            });
+
+    regionReq.setRegionType(TConsensusGroupType.DataRegion);
+    RegionInfoListResp regionInfoList3 =
+        (RegionInfoListResp) partitionInfo.getRegionInfoList(regionReq);
+    Assert.assertEquals(regionInfoList3.getRegionInfoList().size(), 5);
+    regionInfoList3
+        .getRegionInfoList()
+        .forEach(
+            (regionInfo) -> {
+              Assert.assertEquals(
+                  regionInfo.getConsensusGroupId().getType(), TConsensusGroupType.DataRegion);
+            });
   }
 
   private TRegionReplicaSet generateTRegionReplicaSet(
@@ -141,10 +218,11 @@ public class PartitionInfoTest {
     for (int i = startFlag; i < locationNum + startFlag; i++) {
       TDataNodeLocation tDataNodeLocation = new TDataNodeLocation();
       tDataNodeLocation.setDataNodeId(i);
-      tDataNodeLocation.setExternalEndPoint(new TEndPoint("127.0.0.1", 6000 + i));
+      tDataNodeLocation.setClientRpcEndPoint(new TEndPoint("127.0.0.1", 6000 + i));
       tDataNodeLocation.setInternalEndPoint(new TEndPoint("127.0.0.1", 7000 + i));
-      tDataNodeLocation.setDataBlockManagerEndPoint(new TEndPoint("127.0.0.1", 8000 + i));
-      tDataNodeLocation.setConsensusEndPoint(new TEndPoint("127.0.0.1", 9000 + i));
+      tDataNodeLocation.setMPPDataExchangeEndPoint(new TEndPoint("127.0.0.1", 8000 + i));
+      tDataNodeLocation.setDataRegionConsensusEndPoint(new TEndPoint("127.0.0.1", 9000 + i));
+      tDataNodeLocation.setSchemaRegionConsensusEndPoint(new TEndPoint("127.0.0.1", 10000 + i));
       dataNodeLocations.add(tDataNodeLocation);
     }
     tRegionReplicaSet.setDataNodeLocations(dataNodeLocations);
@@ -155,39 +233,42 @@ public class PartitionInfoTest {
       int startFlag, TConsensusGroupId tConsensusGroupId) {
     CreateSchemaPartitionReq createSchemaPartitionReq = new CreateSchemaPartitionReq();
     // Map<StorageGroup, Map<TSeriesPartitionSlot, TSchemaRegionPlaceInfo>>
-    Map<String, Map<TSeriesPartitionSlot, TRegionReplicaSet>> assignedSchemaPartition =
-        new HashMap<>();
-    Map<TSeriesPartitionSlot, TRegionReplicaSet> relationInfo = new HashMap<>();
-    relationInfo.put(
-        new TSeriesPartitionSlot(startFlag),
-        generateTRegionReplicaSet(startFlag, tConsensusGroupId));
-    assignedSchemaPartition.put("root.test.sg", relationInfo);
+    Map<String, SchemaPartitionTable> assignedSchemaPartition = new HashMap<>();
+    Map<TSeriesPartitionSlot, TConsensusGroupId> relationInfo = new HashMap<>();
+    relationInfo.put(new TSeriesPartitionSlot(startFlag), tConsensusGroupId);
+    assignedSchemaPartition.put("root.test", new SchemaPartitionTable(relationInfo));
     createSchemaPartitionReq.setAssignedSchemaPartition(assignedSchemaPartition);
     return createSchemaPartitionReq;
   }
 
   private CreateDataPartitionReq generateCreateDataPartitionReq(
       int startFlag, TConsensusGroupId tConsensusGroupId) {
+    startFlag = startFlag / 10;
     CreateDataPartitionReq createSchemaPartitionReq = new CreateDataPartitionReq();
     // Map<StorageGroup, Map<TSeriesPartitionSlot, Map<TTimePartitionSlot, List<TRegionMessage>>>>
-    Map<String, Map<TSeriesPartitionSlot, Map<TTimePartitionSlot, List<TRegionReplicaSet>>>>
-        dataPartitionMap = new HashMap<>();
+    Map<String, DataPartitionTable> dataPartitionMap = new HashMap<>();
 
-    Map<TTimePartitionSlot, List<TRegionReplicaSet>> relationInfo = new HashMap<>();
-    relationInfo.put(
-        new TTimePartitionSlot(System.currentTimeMillis() / 1000),
-        Collections.singletonList(generateTRegionReplicaSet(startFlag, tConsensusGroupId)));
+    Map<TTimePartitionSlot, List<TConsensusGroupId>> relationInfo = new HashMap<>();
 
-    Map<TSeriesPartitionSlot, Map<TTimePartitionSlot, List<TRegionReplicaSet>>> slotInfo =
-        new HashMap<>();
-    slotInfo.put(new TSeriesPartitionSlot(startFlag), relationInfo);
+    for (int i = 0; i <= startFlag; i++) {
+      relationInfo.put(
+          new TTimePartitionSlot((System.currentTimeMillis() / 1000) + i),
+          Collections.singletonList(tConsensusGroupId));
+    }
 
-    dataPartitionMap.put("root.test.data.sg", slotInfo);
+    Map<TSeriesPartitionSlot, SeriesPartitionTable> slotInfo = new HashMap<>();
+
+    for (int i = 0; i <= startFlag; i++) {
+      slotInfo.put(new TSeriesPartitionSlot(startFlag + i), new SeriesPartitionTable(relationInfo));
+    }
+
+    dataPartitionMap.put("root.test", new DataPartitionTable(slotInfo));
     createSchemaPartitionReq.setAssignedDataPartition(dataPartitionMap);
     return createSchemaPartitionReq;
   }
 
-  private TConsensusGroupId generateTConsensusGroupId(int startFlag) {
-    return new TConsensusGroupId(TConsensusGroupType.PartitionRegion, 111000 + startFlag);
+  private TConsensusGroupId generateTConsensusGroupId(
+      int startFlag, TConsensusGroupType consensusGroupType) {
+    return new TConsensusGroupId(consensusGroupType, 111000 + startFlag);
   }
 }

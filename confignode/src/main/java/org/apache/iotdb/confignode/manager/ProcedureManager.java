@@ -21,18 +21,21 @@ package org.apache.iotdb.confignode.manager;
 
 import org.apache.iotdb.common.rpc.thrift.TSStatus;
 import org.apache.iotdb.commons.utils.StatusUtils;
-import org.apache.iotdb.confignode.conf.ConfigNodeConf;
+import org.apache.iotdb.confignode.conf.ConfigNodeConfig;
 import org.apache.iotdb.confignode.conf.ConfigNodeDescriptor;
-import org.apache.iotdb.confignode.procedure.ConfigProcedureStore;
-import org.apache.iotdb.confignode.procedure.DeleteStorageGroupProcedure;
+import org.apache.iotdb.confignode.persistence.ProcedureInfo;
+import org.apache.iotdb.confignode.procedure.Procedure;
+import org.apache.iotdb.confignode.procedure.ProcedureExecutor;
 import org.apache.iotdb.confignode.procedure.env.ConfigNodeProcedureEnv;
+import org.apache.iotdb.confignode.procedure.impl.AddConfigNodeProcedure;
+import org.apache.iotdb.confignode.procedure.impl.DeleteStorageGroupProcedure;
+import org.apache.iotdb.confignode.procedure.scheduler.ProcedureScheduler;
+import org.apache.iotdb.confignode.procedure.scheduler.SimpleProcedureScheduler;
+import org.apache.iotdb.confignode.procedure.store.ConfigProcedureStore;
+import org.apache.iotdb.confignode.procedure.store.IProcedureStore;
+import org.apache.iotdb.confignode.procedure.store.ProcedureStore;
+import org.apache.iotdb.confignode.rpc.thrift.TConfigNodeRegisterReq;
 import org.apache.iotdb.confignode.rpc.thrift.TStorageGroupSchema;
-import org.apache.iotdb.procedure.Procedure;
-import org.apache.iotdb.procedure.ProcedureExecutor;
-import org.apache.iotdb.procedure.scheduler.ProcedureScheduler;
-import org.apache.iotdb.procedure.scheduler.SimpleProcedureScheduler;
-import org.apache.iotdb.procedure.store.IProcedureStore;
-import org.apache.iotdb.procedure.store.ProcedureStore;
 import org.apache.iotdb.rpc.RpcUtils;
 
 import org.slf4j.Logger;
@@ -44,31 +47,35 @@ import java.util.concurrent.TimeUnit;
 
 public class ProcedureManager {
   private static final Logger LOGGER = LoggerFactory.getLogger(ProcedureManager.class);
+
+  private static final ConfigNodeConfig CONFIG_NODE_CONFIG =
+      ConfigNodeDescriptor.getInstance().getConf();
+
   private static final int procedureWaitTimeOut = 30;
   private static final int procedureWaitRetryTimeout = 250;
-  private final ConfigManager configNodeManager;
+
+  private final ConfigManager configManager;
   private ProcedureExecutor<ConfigNodeProcedureEnv> executor;
   private ProcedureScheduler scheduler;
   private IProcedureStore store;
   private ConfigNodeProcedureEnv env;
-  private ConfigNodeConf configNodeConf = ConfigNodeDescriptor.getInstance().getConf();
 
-  public ProcedureManager(ConfigManager configManager) {
-    this.configNodeManager = configManager;
+  public ProcedureManager(ConfigManager configManager, ProcedureInfo procedureInfo) {
+    this.configManager = configManager;
     this.scheduler = new SimpleProcedureScheduler();
-    this.store = new ConfigProcedureStore(configManager);
-    this.env = new ConfigNodeProcedureEnv(configManager);
+    this.store = new ConfigProcedureStore(configManager, procedureInfo);
+    this.env = new ConfigNodeProcedureEnv(configManager, scheduler);
     this.executor = new ProcedureExecutor<>(env, store, scheduler);
   }
 
   public void shiftExecutor(boolean running) {
     if (running) {
       if (!executor.isRunning()) {
-        executor.init(configNodeConf.getSchemaReplicationFactor());
+        executor.init(CONFIG_NODE_CONFIG.getProcedureCoreWorkerThreadsSize());
         executor.startWorkers();
         executor.startCompletedCleaner(
-            configNodeConf.getProcedureCompletedCleanInterval(),
-            configNodeConf.getProcedureCompletedEvictTTL());
+            CONFIG_NODE_CONFIG.getProcedureCompletedCleanInterval(),
+            CONFIG_NODE_CONFIG.getProcedureCompletedEvictTTL());
         store.start();
       }
     } else {
@@ -92,11 +99,25 @@ public class ProcedureManager {
     }
     List<TSStatus> procedureStatus = new ArrayList<>();
     boolean isSucceed = getProcedureStatus(this.executor, procIdList, procedureStatus);
+    // clear the previously deleted regions
+    final PartitionManager partitionManager = getConfigManager().getPartitionManager();
+    partitionManager.getRegionCleaner().submit(partitionManager::clearDeletedRegions);
     if (isSucceed) {
       return StatusUtils.OK;
     } else {
       return RpcUtils.getStatus(procedureStatus);
     }
+  }
+
+  /**
+   * generate a procedure, and execute by one by one
+   *
+   * @param req new config node
+   */
+  public void addConfigNode(TConfigNodeRegisterReq req) {
+    AddConfigNodeProcedure addConfigNodeProcedure =
+        new AddConfigNodeProcedure(req.getConfigNodeLocation());
+    this.executor.submitProcedure(addConfigNodeProcedure);
   }
 
   private static boolean getProcedureStatus(
@@ -145,8 +166,8 @@ public class ProcedureManager {
      GET-SET Region
   */
   // ======================================================
-  public Manager getConfigNodeManager() {
-    return configNodeManager;
+  public IManager getConfigManager() {
+    return configManager;
   }
 
   public ProcedureExecutor<ConfigNodeProcedureEnv> getExecutor() {
